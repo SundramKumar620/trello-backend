@@ -45,7 +45,7 @@ const taskSchema = new Schema(
     title: { type: String, required: true },
     description: { type: String, required: true },
     board: { type: Schema.Types.ObjectId, ref: "Board", required: true },
-    assignedTo: { type: Schema.Types.ObjectId, ref: "User" }, // renamed for clarity
+    assignedTo: { type: Schema.Types.ObjectId, ref: "User" },
     status: { type: String, enum: ["To Do", "In Progress", "Done"], default: "To Do" },
     isCompleted: { type: Boolean, default: false },
   },
