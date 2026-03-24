@@ -27,6 +27,15 @@ const organizationSchema = new Schema(
 
 const Organization = model("Organization", organizationSchema);
 
+const organizationUserSchema = new Schema({
+  organization: { type: Schema.Types.ObjectId, ref: "Organization" },
+  user: { type: Schema.Types.ObjectId, ref: "User" },
+  role: { type: String, enum: ["admin", "member"], default: "member" }
+}, { timestamps: true }
+)
+
+const OrganizationMember = model("OrganizationMember", organizationUserSchema)
+
 /* ================= BOARD ================= */
 const boardSchema = new Schema(
   {
@@ -54,4 +63,4 @@ const taskSchema = new Schema(
 
 const Task = model("Task", taskSchema);
 
-export { User, Organization, Board, Task };
+export { User, Organization, Board, Task, OrganizationMember };
