@@ -2,268 +2,220 @@ import express from "express";
 import dotenv from "dotenv";
 import { connectDB } from "./db.js";
 import { User, Organization, Board, Task, OrganizationMember } from "./models/model.js";
-import bcrypt from "bcrypt"
-import jwt from "jsonwebtoken"
-import { authMiddleware } from "./middleware.js"
+import bcrypt from "bcrypt";
+import jwt from "jsonwebtoken";
+import { authMiddleware } from "./middleware.js";
 
 dotenv.config();
-
 const app = express();
 app.use(express.json());
 const PORT = process.env.PORT || 3000;
 
 connectDB().then(() => {
-    app.listen(PORT, () => {
-        console.log(`Backend is running on port ${PORT}`);
-    });
+    app.listen(PORT, () => console.log(`Backend running on port ${PORT}`));
 });
 
+// ==================== ROOT ====================
 app.get("/", authMiddleware, async (req, res) => {
-    return res.status(200).json({ message: "Server Running Niggaa" })
-})
+    return res.status(200).json({ message: "Server running" });
+});
 
+// ==================== SIGNUP ====================
 app.post("/api/v1/signup", async (req, res) => {
     try {
-        const { email, password } = req.body
-        console.log(email, password)
+        const { email, password } = req.body;
+        if (!email || !password) return res.status(400).json({ message: "Email and password required" });
 
-        if (!email || !password) {
-            return res.status(400).json({ message: "bhai email aur password dono daal" })
-        }
+        const existingUser = await User.findOne({ email });
+        if (existingUser) return res.status(409).json({ message: "Email already exists" });
 
-        const existinguser = await User.findOne({ email })
+        const hashedPassword = await bcrypt.hash(password, 10);
+        const user = await User.create({ email, password: hashedPassword });
 
-        if (existinguser) {
-            return res.status(409).json({ message: "email already hai bhai" })
-        }
-
-        const hashedpassword = await bcrypt.hash(password, 10)
-
-        const user = await User.create({ email, password: hashedpassword })
-
-        return res.status(201).json({
-            message: "hogaya register, ab maze kar",
-            user: {
-                id: user._id,
-                email: user.email
-            }
-        })
-
+        return res.status(201).json({ message: "User registered", user: { id: user._id, email: user.email } });
     } catch (err) {
-        console.log(err)
-        return res.status(500).json({ message: "server phat gaya" })
+        console.error(err);
+        return res.status(500).json({ message: "Server error" });
     }
-})
+});
 
+// ==================== LOGIN ====================
 app.post("/api/v1/login", async (req, res) => {
     try {
-        const { email, password } = req.body
+        const { email, password } = req.body;
+        if (!email || !password) return res.status(400).json({ message: "Email and password required" });
 
-        if (!email || !password) {
-            return res.status(400).json({ message: "bhai email aur password dono daal" })
-        }
+        const user = await User.findOne({ email: email.toLowerCase() });
+        if (!user) return res.status(404).json({ message: "User not found" });
 
-        const user = await User.findOne({ email: email.toLowerCase() })
+        const isMatch = await bcrypt.compare(password, user.password);
+        if (!isMatch) return res.status(401).json({ message: "Incorrect password" });
 
-        if (!user) {
-            return res.status(404).json({ message: "bhai pehle signup kar" })
-        }
-
-        const isPasswordMatch = await bcrypt.compare(password, user.password)
-
-        if (!isPasswordMatch) {
-            return res.status(401).json({ message: "password galat hai bhai" })
-        }
-
-        const token = jwt.sign(
-            { id: user._id, email: user.email },
-            process.env.JWT_SECRET,
-            { expiresIn: "1h" }
-        )
-
-        return res.status(200).json({
-            message: "login hogaya bhai",
-            token
-        })
-
+        const token = jwt.sign({ id: user._id, email: user.email }, process.env.JWT_SECRET, { expiresIn: "1h" });
+        return res.status(200).json({ message: "Login successful", token });
     } catch (err) {
-        return res.status(500).json({ message: "server firse phat gaya" })
+        console.error(err);
+        return res.status(500).json({ message: "Server error" });
     }
-})
+});
 
+// ==================== ORGANIZATION ====================
 app.post("/api/v1/organization", authMiddleware, async (req, res) => {
     try {
-        const { name, description } = req.body
-        const adminid = req.user.id
+        const { name, description } = req.body;
+        if (!name || !description) return res.status(400).json({ message: "Name and description required" });
 
+        const exists = await Organization.findOne({ name });
+        if (exists) return res.status(409).json({ message: "Organization name already exists" });
 
-        if (!name || !description || !adminid) {
-            return res.status(400).json({ message: "sab kuch chaiye bhai" })
-        }
-
-        const organizationexistname = await Organization.findOne({ name })
-
-        if (organizationexistname) {
-            return res.status(409).json({ message: "ye naam pehle se liya hua hai" })
-        }
-
-        const organization = await Organization.create({
-            name,
-            description,
-            admin: adminid
-        })
-
-        return res.status(201).json({
-            message: "organization ban gaya",
-            organization
-        })
-
+        const organization = await Organization.create({ name, description, admin: req.user.id });
+        return res.status(201).json({ message: "Organization created", organization });
     } catch (err) {
-        return res.status(500).json({ message: "server phat gaya firse" })
+        console.error(err);
+        return res.status(500).json({ message: "Server error" });
     }
-})
+});
 
 app.get("/api/v1/organization", authMiddleware, async (req, res) => {
     try {
-        const organizations = await Organization.find({ admin: req.user.id })
-        return res.status(200).json({
-            message: "ye lo tumhari organizations",
-            organizations
-        })
+        // Fetch orgs where user is admin OR member
+        const adminOrgs = await Organization.find({ admin: req.user.id });
+        const memberOrgIds = await OrganizationMember.find({ user: req.user.id }).distinct("organization");
+        const memberOrgs = await Organization.find({ _id: { $in: memberOrgIds } });
+
+        const organizations = [...adminOrgs, ...memberOrgs];
+        return res.status(200).json({ message: "Your organizations", organizations });
     } catch (err) {
-        return res.status(500).json({ message: "server phat gaya firse" })
+        console.error(err);
+        return res.status(500).json({ message: "Server error" });
     }
-})
+});
 
-app.delete("/api/v1/organization/:id", authMiddleware, async (req, res) => {
-    try {
-        const id = req.params.id
-
-        const deletedOrg = await Organization.findOneAndDelete({
-            _id: id,
-            admin: req.user.id
-        })
-
-        if (!deletedOrg) {
-            return res.status(404).json({
-                message: "ya to organization nahi mila ya tu admin nahi hai bhai"
-            })
-        }
-
-        return res.status(200).json({
-            message: "organization delete ho gaya bhai"
-        })
-
-    } catch (err) {
-        return res.status(500).json({ message: "server phat gaya firse " })
-    }
-})
-
+// ==================== ORGANIZATION MEMBERS ====================
 app.post("/api/v1/organization/add-member", authMiddleware, async (req, res) => {
     try {
-        const { organizationId, memberEmail } = req.body
+        const { organizationId, memberEmail } = req.body;
+        if (!organizationId || !memberEmail) return res.status(400).json({ message: "organizationId and memberEmail required" });
 
-        if (!organizationId || !memberEmail) {
-            return res.status(400).json({ message: "organizationId aur memberEmail dono chaiye" })
-        }
+        const organization = await Organization.findById(organizationId);
+        if (!organization) return res.status(404).json({ message: "Organization not found" });
+        if (organization.admin.toString() !== req.user.id) return res.status(403).json({ message: "Only admin can add members" });
 
-        const memberexist = await User.findOne({ email: memberEmail })
-        if (!memberexist) {
-            return res.status(404).json({ message: "bhai user toh exist nahi karta" })
-        }
+        const user = await User.findOne({ email: memberEmail });
+        if (!user) return res.status(404).json({ message: "User not found" });
 
-        const organizationexist = await Organization.findOne({
-            _id: organizationId,
-            admin: req.user.id
-        })
-        if (!organizationexist) {
-            return res.status(404).json({ message: "organization nahi mila bhai" })
-        }
+        const exists = await OrganizationMember.findOne({ organization: organizationId, user: user._id });
+        if (exists) return res.status(400).json({ message: "User already a member" });
 
-        const memberalready = await OrganizationMember.findOne({
-            organization: organizationId,
-            user: memberexist._id
-        })
-        if (memberalready) {
-            return res.status(400).json({ message: "ye banda toh pehle se hi member hai bhai" })
-        }
+        const member = await OrganizationMember.create({ organization: organizationId, user: user._id });
+        await Organization.findByIdAndUpdate(organizationId, { $inc: { memberCount: 1 } });
 
-        const newmember = await OrganizationMember.create({
-            organization: organizationId,
-            user: memberexist._id
-        })
-
-        await Organization.findByIdAndUpdate(organizationId, {
-            $inc: { memberCount: 1 }
-        })
-
-        return res.status(201).json({
-            message: "member add ho gaya bhai ab maze kar",
-            member: newmember
-        })
+        return res.status(201).json({ message: "Member added", member });
     } catch (err) {
-        return res.status(500).json({ message: "server phat gaya" })
+        console.error(err);
+        return res.status(500).json({ message: "Server error" });
     }
-})
+});
 
 app.get("/api/v1/organization/members/:id", authMiddleware, async (req, res) => {
     try {
-        const organizationId = req.params.id
+        const organizationId = req.params.id;
+        const organization = await Organization.findById(organizationId);
+        if (!organization) return res.status(404).json({ message: "Organization not found" });
 
-        const organizationexist = await Organization.findOne({
-            _id: organizationId,
-            admin: req.user.id
-        })
+        // Only admin or members can see
+        const isAdmin = organization.admin.toString() === req.user.id;
+        const isMember = await OrganizationMember.exists({ organization: organizationId, user: req.user.id });
+        if (!isAdmin && !isMember) return res.status(403).json({ message: "Access denied" });
 
-        if (!organizationexist) {
-            return res.status(404).json({ message: "organization nahi mila bhai" })
-        }
-
-        const members = await OrganizationMember.find({ organization: organizationId }).populate("user", "email name")
-
-        return res.status(200).json({
-            message: "ye lo members ki list",
-            members
-        })
+        const members = await OrganizationMember.find({ organization: organizationId }).populate("user", "email name");
+        return res.status(200).json({ message: "Members list", members });
     } catch (err) {
-        return res.status(500).json({ message: "server phat gaya" })
+        console.error(err);
+        return res.status(500).json({ message: "Server error" });
     }
-})
+});
 
-app.delete("/api/v1/organization/remove-member", authMiddleware, async (req, res) => {
-    const { memberEmail, organizationId } = req.body
+// ==================== BOARDS ====================
+app.post("/api/v1/boards", authMiddleware, async (req, res) => {
+    try {
+        const { name, description, organizationId } = req.body;
+        if (!name || !description || !organizationId) return res.status(400).json({ message: "Name, description, organizationId required" });
 
-    const organizationexist = await Organization.findOne({
-        _id: organizationId,
-        admin: req.user.id
-    })
+        const organization = await Organization.findById(organizationId);
+        if (!organization) return res.status(404).json({ message: "Organization not found" });
+        if (organization.admin.toString() !== req.user.id) return res.status(403).json({ message: "Only admin can create boards" });
 
-    if (!organizationexist) {
-        return res.status(404).json({ message: "organization nahi mila bhai" })
+        const board = await Board.create({ name, description, organization: organizationId });
+        return res.status(201).json({ message: "Board created", board });
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ message: "Server error" });
     }
+});
 
-    const memberexist = await User.findOne({ email: memberEmail })
-    if (!memberexist) {
-        return res.status(404).json({ message: "user nahi mila bhai" })
+app.get("/api/v1/boards/:organizationId", authMiddleware, async (req, res) => {
+    try {
+        const { organizationId } = req.params;
+        const organization = await Organization.findById(organizationId);
+        if (!organization) return res.status(404).json({ message: "Organization not found" });
+
+        // Admin or member can view boards
+        const isAdmin = organization.admin.toString() === req.user.id;
+        const isMember = await OrganizationMember.exists({ organization: organizationId, user: req.user.id });
+        if (!isAdmin && !isMember) return res.status(403).json({ message: "Access denied" });
+
+        const boards = await Board.find({ organization: organizationId });
+        return res.status(200).json({ message: "Boards list", boards });
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ message: "Server error" });
     }
+});
 
-    const member = await OrganizationMember.findOneAndDelete({
-        organization: organizationId,
-        user: memberexist._id
-    })
+// ==================== TASKS ====================
+app.post("/api/v1/tasks", authMiddleware, async (req, res) => {
+    try {
+        const { name, description, boardId, assignedId } = req.body;
+        if (!name || !description || !boardId || !assignedId) return res.status(400).json({ message: "All fields required" });
 
-    if (!member) {
-        return res.status(404).json({ message: "ye banda toh member hi nahi tha bhai" })
+        const board = await Board.findById(boardId);
+        if (!board) return res.status(404).json({ message: "Board not found" });
+
+        const organization = await Organization.findById(board.organization);
+        if (!organization) return res.status(404).json({ message: "Organization not found" });
+
+        // Only admin or member can create tasks
+        const isAdmin = organization.admin.toString() === req.user.id;
+        const isMember = await OrganizationMember.exists({ organization: organization._id, user: req.user.id });
+        if (!isAdmin && !isMember) return res.status(403).json({ message: "Access denied" });
+
+        const task = await Task.create({ title: name, description, board: boardId, assignedTo: assignedId });
+        return res.status(201).json({ message: "Task created", task });
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ message: "Server error" });
     }
+});
 
-    await Organization.findByIdAndUpdate(organizationId, {
-        $inc: { memberCount: -1 }
-    })
+app.get("/api/v1/tasks/:boardId", authMiddleware, async (req, res) => {
+    try {
+        const { boardId } = req.params;
+        const board = await Board.findById(boardId);
+        if (!board) return res.status(404).json({ message: "Board not found" });
 
-    return res.status(200).json({
-        message: "member delete ho gaya bhai"
-    })
+        const organization = await Organization.findById(board.organization);
+        if (!organization) return res.status(404).json({ message: "Organization not found" });
 
-})
+        // Admin or member can view tasks
+        const isAdmin = organization.admin.toString() === req.user.id;
+        const isMember = await OrganizationMember.exists({ organization: organization._id, user: req.user.id });
+        if (!isAdmin && !isMember) return res.status(403).json({ message: "Access denied" });
 
-
+        const tasks = await Task.find({ board: boardId }).populate("assignedTo", "email name");
+        return res.status(200).json({ message: "Tasks list", tasks });
+    } catch (err) {
+        console.error(err);
+        return res.status(500).json({ message: "Server error" });
+    }
+});
